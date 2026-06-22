@@ -208,9 +208,32 @@ async function initDatabase() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS wo_stations (
+      id TEXT PRIMARY KEY,
+      work_order_id TEXT NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+      station_id TEXT NOT NULL REFERENCES stations(id) ON DELETE RESTRICT,
+      job_card_number TEXT,
+      status TEXT DEFAULT 'pending',
+      actual_start DATETIME,
+      actual_end DATETIME,
+      actual_qty INTEGER DEFAULT 0,
+      ng_qty INTEGER DEFAULT 0,
+      operator_id TEXT,
+      operator_name TEXT,
+      notes TEXT,
+      availability REAL,
+      performance REAL,
+      quality REAL,
+      oee REAL,
+      sort_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS downtime_events (
       id TEXT PRIMARY KEY,
       station_id TEXT REFERENCES stations(id) ON DELETE CASCADE,
+      job_card_id TEXT REFERENCES wo_stations(id) ON DELETE SET NULL,
       started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       ended_at TIMESTAMPTZ,
       duration_sec INTEGER,
@@ -234,7 +257,9 @@ async function initDatabase() {
 
     CREATE TABLE IF NOT EXISTS profiles (
       id TEXT PRIMARY KEY,
+      email TEXT,
       full_name TEXT,
+      username TEXT UNIQUE,
       password_hash TEXT,
       line_id TEXT REFERENCES lines(id) ON DELETE SET NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -291,6 +316,9 @@ async function initDatabase() {
   try { await db.exec("CREATE TABLE IF NOT EXISTS api_tokens (id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, label TEXT, node_name TEXT NOT NULL, station_id TEXT, permissions TEXT DEFAULT 'read,write', expires_at DATETIME, last_used_at DATETIME, created_by TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"); } catch (e) {}
   try { await db.exec("ALTER TABLE profiles ADD COLUMN password_hash TEXT"); } catch (e) {}
   try { await db.exec("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"); } catch (e) {}
+  try { await db.exec("ALTER TABLE profiles ADD COLUMN email TEXT"); } catch (e) {}
+  try { await db.exec("UPDATE profiles SET email = id WHERE email IS NULL AND id LIKE '%@%'"); } catch (e) {}
+  try { await db.exec("UPDATE profiles SET email = full_name WHERE email IS NULL"); } catch (e) {}
   
   console.log('[SQLite Central] Database initialized.');
 }
@@ -444,6 +472,26 @@ app.post('/api/local-db', async (req, res) => {
           event: 'INSERT',
           new: record
         });
+
+        // Auto-create wo_stations for work_orders
+        if (table === 'work_orders' && record.station_ids) {
+          try {
+            var stationIds = JSON.parse(record.station_ids);
+            if (Array.isArray(stationIds)) {
+              var wCount = await db.get('SELECT COUNT(*) as c FROM wo_stations WHERE work_order_id = ?', [record.id]);
+              for (var si = 0; si < stationIds.length; si++) {
+                var jcId = crypto.randomUUID();
+                var jcNumber = record.wo_number + '/' + (wCount.c + si + 1);
+                await db.run(
+                  'INSERT INTO wo_stations (id, work_order_id, station_id, job_card_number, sort_order) VALUES (?, ?, ?, ?, ?)',
+                  [jcId, record.id, stationIds[si], jcNumber, si]
+                );
+              }
+            }
+          } catch (e) {
+            console.error('[wo_stations] Failed to create job cards:', e.message);
+          }
+        }
       }
 
       return res.json({ data: Array.isArray(data) ? insertedRows : insertedRows[0], error: null });
@@ -486,10 +534,45 @@ app.post('/api/local-db', async (req, res) => {
         });
       }
 
+      // Sync wo_stations when station_ids changes on work_orders
+      if (table === 'work_orders' && data.station_ids) {
+        var woIdParam = queries.find(function(q) { return q.type === 'eq' && q.column === 'id'; });
+        if (woIdParam) {
+          try {
+            var woInfo = await db.get('SELECT wo_number FROM work_orders WHERE id = ?', [woIdParam.value]);
+            await db.run('DELETE FROM wo_stations WHERE work_order_id = ?', [woIdParam.value]);
+            var newStationIds = JSON.parse(data.station_ids);
+            if (Array.isArray(newStationIds)) {
+              for (var si2 = 0; si2 < newStationIds.length; si2++) {
+                var jcId2 = crypto.randomUUID();
+                var jcNum2 = (woInfo ? woInfo.wo_number : 'WO') + '/' + (si2 + 1);
+                await db.run(
+                  'INSERT INTO wo_stations (id, work_order_id, station_id, job_card_number, sort_order) VALUES (?, ?, ?, ?, ?)',
+                  [jcId2, woIdParam.value, newStationIds[si2], jcNum2, si2]
+                );
+              }
+            }
+          } catch (e) {
+            console.error('[wo_stations] Failed to sync job cards:', e.message);
+          }
+        }
+      }
+
       return res.json({ data: updatedRecord, error: null });
     }
 
     if (method === 'DELETE') {
+      // Cascade delete wo_stations
+      if (table === 'work_orders') {
+        var woDeleteParams = [];
+        queries.forEach(function(q) {
+          if (q.type === 'eq') { woDeleteParams.push(q.value); }
+        });
+        if (woDeleteParams.length > 0) {
+          var placeholders = woDeleteParams.map(function() { return '?'; }).join(',');
+          await db.run('DELETE FROM wo_stations WHERE work_order_id IN (' + placeholders + ')', woDeleteParams);
+        }
+      }
       let sql = `DELETE FROM ${table}`;
       const params = [];
       const whereClauses = [];
@@ -517,7 +600,10 @@ app.post('/api/local-db', async (req, res) => {
 
 // REST API for Auth — REAL AUTH with password hashing
 app.post('/api/local-auth/signup', async (req, res) => {
-  const { email, password, fullName } = req.body;
+  var email = req.body.email || req.body.username;
+  var password = req.body.password;
+  var fullName = req.body.fullName;
+  var username = req.body.username;
   if (!email || !password) {
     return res.status(400).json({ error: { message: 'Email and password required.' } });
   }
@@ -526,27 +612,27 @@ app.post('/api/local-auth/signup', async (req, res) => {
   }
 
   try {
-    const existing = await db.get('SELECT id FROM profiles WHERE id = ? OR full_name = ?', [email, email]);
+    var existing = await db.get('SELECT id FROM profiles WHERE id = ? OR full_name = ?', [email, email]);
     if (existing) {
       return res.status(409).json({ error: { message: 'User already registered.' } });
     }
 
-    const userId = crypto.randomUUID();
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
-    const passwordHash = salt + ':' + hash;
+    var userId = crypto.randomUUID();
+    var salt = crypto.randomBytes(16).toString('hex');
+    var hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+    var passwordHash = salt + ':' + hash;
 
-    await db.run('INSERT INTO profiles (id, full_name, password_hash) VALUES (?, ?, ?)', [userId, fullName || email, passwordHash]);
+    await db.run('INSERT INTO profiles (id, full_name, username, password_hash) VALUES (?, ?, ?, ?)', [userId, fullName || email, username || null, passwordHash]);
 
-    const totalUsers = await db.get('SELECT COUNT(*) as count FROM user_roles');
-    const role = totalUsers.count === 0 ? 'admin' : 'viewer';
+    var totalUsers = await db.get('SELECT COUNT(*) as count FROM user_roles');
+    var role = totalUsers.count === 0 ? 'admin' : 'viewer';
     await db.run('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)', [crypto.randomUUID(), userId, role]);
 
-    const roles = [role];
-    const sessionToken = crypto.randomBytes(32).toString('hex');
+    var roles = [role];
+    var sessionToken = crypto.randomBytes(32).toString('hex');
     await db.run('INSERT INTO sessions (id, user_id, token, created_at) VALUES (?, ?, ?, datetime(\"now\"))', [crypto.randomUUID(), userId, sessionToken]);
 
-    const user = { id: userId, email, roles };
+    var user = { id: userId, email, roles };
     return res.status(201).json({ user, session: { access_token: sessionToken } });
   } catch (err) {
     return res.status(500).json({ error: { message: err.message } });
@@ -554,60 +640,63 @@ app.post('/api/local-auth/signup', async (req, res) => {
 });
 
 app.post('/api/local-auth/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: { message: 'Email and password required.' } });
+  var credential = req.body.username || req.body.email;
+  var password = req.body.password;
+  if (!credential || !password) {
+    return res.status(400).json({ error: { message: 'Username and password required.' } });
   }
 
   try {
-    const profile = await db.get('SELECT * FROM profiles WHERE full_name = ? OR id = ?', [email, email]);
+    var profile = await db.get('SELECT * FROM profiles WHERE username = ? OR email = ? OR full_name = ? OR id = ?', [credential, credential, credential, credential]);
 
     if (!profile) {
       // Auto-create first user only if DB is completely empty
-      const totalUsers = await db.get('SELECT COUNT(*) as count FROM profiles');
+      var totalUsers = await db.get('SELECT COUNT(*) as count FROM profiles');
       if (totalUsers.count === 0) {
-        const userId = crypto.randomUUID();
-        const salt = crypto.randomBytes(16).toString('hex');
-        const hash = crypto.pbkdf2Sync(password, 100000, 64, 'sha512').toString('hex');
-        const passwordHash = salt + ':' + hash;
+        var userId = crypto.randomUUID();
+        var salt = crypto.randomBytes(16).toString('hex');
+        var hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+        var passwordHash = salt + ':' + hash;
 
-        await db.run('INSERT INTO profiles (id, full_name, password_hash) VALUES (?, ?, ?)', [userId, email, passwordHash]);
+        await db.run('INSERT INTO profiles (id, email, full_name, password_hash) VALUES (?, ?, ?, ?)', [userId, credential, credential, passwordHash]);
         await db.run('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)', [crypto.randomUUID(), userId, 'admin']);
 
-        const sessionToken = crypto.randomBytes(32).toString('hex');
+        var sessionToken = crypto.randomBytes(32).toString('hex');
         await db.run('INSERT INTO sessions (id, user_id, token, created_at) VALUES (?, ?, ?, datetime(\"now\"))', [crypto.randomUUID(), userId, sessionToken]);
 
-        const user = { id: userId, email, roles: ['admin'] };
+        var user = { id: userId, email: credential, roles: ['admin'] };
         return res.json({ user, session: { access_token: sessionToken } });
       }
-      return res.status(401).json({ error: { message: 'Invalid email or password.' } });
+      return res.status(401).json({ error: { message: 'Invalid username or password.' } });
     }
 
     // Verify password (or auto-migrate existing users without password_hash)
     if (!profile.password_hash) {
-      // Migrate: set password_hash from current password input
-      const salt = crypto.randomBytes(16).toString('hex');
-      const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
-      const passwordHash = salt + ':' + hash;
+      var salt = crypto.randomBytes(16).toString('hex');
+      var hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+      var passwordHash = salt + ':' + hash;
       await db.run('UPDATE profiles SET password_hash = ? WHERE id = ?', [passwordHash, profile.id]);
       console.log('[Auth] Migrated existing user to real auth: ' + profile.full_name);
     } else {
-      const [salt, storedHash] = profile.password_hash.split(':');
-      const computedHash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+      var parts = profile.password_hash.split(':');
+      if (parts.length < 2) return res.status(500).json({ error: { message: 'Corrupted password hash.' } });
+      var salt = parts[0];
+      var storedHash = parts[1];
+      var computedHash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
 
       if (computedHash !== storedHash) {
-        return res.status(401).json({ error: { message: 'Invalid email or password.' } });
+        return res.status(401).json({ error: { message: 'Invalid username or password.' } });
       }
     }
 
-    const rolesRows = await db.all('SELECT role FROM user_roles WHERE user_id = ?', [profile.id]);
-    const roles = rolesRows.map(r => r.role);
+    var rolesRows = await db.all('SELECT role FROM user_roles WHERE user_id = ?', [profile.id]);
+    var roles = rolesRows.map(function(r) { return r.role; });
 
     // Create session
-    const sessionToken = crypto.randomBytes(32).toString('hex');
+    var sessionToken = crypto.randomBytes(32).toString('hex');
     await db.run('INSERT INTO sessions (id, user_id, token, created_at) VALUES (?, ?, ?, datetime(\"now\"))', [crypto.randomUUID(), profile.id, sessionToken]);
 
-    const user = { id: profile.id, email: profile.full_name || email, roles };
+    var user = { id: profile.id, email: profile.email || profile.full_name || credential, roles: roles };
     return res.json({ user, session: { access_token: sessionToken } });
   } catch (err) {
     return res.status(500).json({ error: { message: err.message } });
@@ -623,7 +712,7 @@ app.get('/api/local-auth/me', async (req, res) => {
   const token = authHeader.split(' ')[1];
   try {
     const session = await db.get(
-      "SELECT s.user_id, p.full_name FROM sessions s JOIN profiles p ON p.id = s.user_id WHERE s.token = ?",
+      "SELECT s.user_id, p.full_name, p.email FROM sessions s JOIN profiles p ON p.id = s.user_id WHERE s.token = ?",
       [token]
     );
     if (!session) return res.status(401).json({ error: { message: 'Session expired or invalid.' } });
@@ -631,7 +720,7 @@ app.get('/api/local-auth/me', async (req, res) => {
     const rolesRows = await db.all('SELECT role FROM user_roles WHERE user_id = ?', [session.user_id]);
     const roles = rolesRows.map(r => r.role);
 
-    return res.json({ user: { id: session.user_id, email: session.full_name, roles } });
+    return res.json({ user: { id: session.user_id, email: session.email || session.full_name, roles } });
   } catch (err) {
     return res.status(500).json({ error: { message: err.message } });
   }
@@ -844,6 +933,87 @@ app.post('/api/admin/tokens/:id/regenerate', requireAdminSession, async (req, re
   }
 });
 
+// ── Admin User Management ──
+app.post('/api/admin/users', requireAdminSession, async (req, res) => {
+  var email = req.body.email || req.body.username;
+  var password = req.body.password;
+  var fullName = req.body.fullName;
+  var roles = req.body.roles;
+  var line_id = req.body.line_id;
+  var username = req.body.username;
+  if (!email || !password) return res.status(400).json({ error: { message: 'Email/username and password required.' } });
+  if (password.length < 4) return res.status(400).json({ error: { message: 'Password must be at least 4 characters.' } });
+  try {
+    var existing = await db.get('SELECT id FROM profiles WHERE email = ? OR username = ?', [email, username || email]);
+    if (existing) return res.status(409).json({ error: { message: 'User already exists.' } });
+    var userId = crypto.randomUUID();
+    var salt = crypto.randomBytes(16).toString('hex');
+    var hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+    var passwordHash = salt + ':' + hash;
+    await db.run('INSERT INTO profiles (id, email, full_name, username, password_hash, line_id) VALUES (?, ?, ?, ?, ?, ?)', [userId, email, fullName || email, username || null, passwordHash, line_id || null]);
+    if (roles && Array.isArray(roles)) {
+      for (var ri = 0; ri < roles.length; ri++) {
+        await db.run('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)', [crypto.randomUUID(), userId, roles[ri]]);
+      }
+    }
+    return res.status(201).json({ data: { id: userId, email: email, full_name: fullName, username: username, line_id: line_id || null, roles: roles || [] } });
+  } catch (err) {
+    return res.status(500).json({ error: { message: err.message } });
+  }
+});
+
+app.put('/api/admin/users/:id', requireAdminSession, async (req, res) => {
+  var id = req.params.id;
+  var email = req.body.email;
+  var fullName = req.body.fullName;
+  var username = req.body.username;
+  var password = req.body.password;
+  var roles = req.body.roles;
+  var line_id = req.body.line_id;
+  try {
+    var user = await db.get('SELECT * FROM profiles WHERE id = ?', [id]);
+    if (!user) return res.status(404).json({ error: { message: 'User not found.' } });
+    var updates = [];
+    var params = [];
+    if (email !== undefined) { updates.push('email = ?'); params.push(email); }
+    if (fullName !== undefined) { updates.push('full_name = ?'); params.push(fullName); }
+    if (username !== undefined) { updates.push('username = ?'); params.push(username); }
+    if (line_id !== undefined) { updates.push('line_id = ?'); params.push(line_id); }
+    if (password) {
+      var salt = crypto.randomBytes(16).toString('hex');
+      var hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+      updates.push('password_hash = ?');
+      params.push(salt + ':' + hash);
+    }
+    if (updates.length > 0) {
+      params.push(id);
+      await db.run('UPDATE profiles SET ' + updates.join(', ') + ', updated_at = datetime("now") WHERE id = ?', params);
+    }
+    if (roles && Array.isArray(roles)) {
+      await db.run('DELETE FROM user_roles WHERE user_id = ?', [id]);
+      for (var ri2 = 0; ri2 < roles.length; ri2++) {
+        await db.run('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)', [crypto.randomUUID(), id, roles[ri2]]);
+      }
+    }
+    var updated = await db.get('SELECT id, email, full_name, username, line_id FROM profiles WHERE id = ?', [id]);
+    return res.json({ data: { id: updated.id, email: updated.email, full_name: updated.full_name, username: updated.username, line_id: updated.line_id, roles: roles || [] } });
+  } catch (err) {
+    return res.status(500).json({ error: { message: err.message } });
+  }
+});
+
+app.delete('/api/admin/users/:id', requireAdminSession, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.run('DELETE FROM sessions WHERE user_id = ?', [id]);
+    await db.run('DELETE FROM user_roles WHERE user_id = ?', [id]);
+    await db.run('DELETE FROM profiles WHERE id = ?', [id]);
+    return res.json({ data: { success: true } });
+  } catch (err) {
+    return res.status(500).json({ error: { message: err.message } });
+  }
+});
+
 io.on('connection', (socket) => {
   console.log('[WebSocket] Client connected.');
 });
@@ -889,6 +1059,59 @@ async function main() {
       console.log('  ✅ Added serial_prefix to products');
     } catch (e) { console.error('Migration failed for serial_prefix:', e.message); }
   }
+
+  // Migration: add job_card_number to wo_stations
+  var wsInfo = await db.all("PRAGMA table_info(wo_stations)");
+  var wsCols = wsInfo.map(function(r) { return r.name; });
+  if (!wsCols.includes('job_card_number')) {
+    try {
+      await db.run('ALTER TABLE wo_stations ADD COLUMN job_card_number TEXT');
+      // Backfill existing rows
+      var wos = await db.all('SELECT w.wo_number, s.work_order_id, s.sort_order FROM wo_stations s JOIN work_orders w ON w.id = s.work_order_id WHERE s.job_card_number IS NULL ORDER BY s.work_order_id, s.sort_order');
+      for (var wi = 0; wi < wos.length; wi++) {
+        await db.run('UPDATE wo_stations SET job_card_number = ? WHERE work_order_id = ? AND sort_order = ?',
+          [wos[wi].wo_number + '/' + (wos[wi].sort_order + 1), wos[wi].work_order_id, wos[wi].sort_order]);
+      }
+      if (wos.length > 0) console.log('  ✅ Backfilled ' + wos.length + ' job_card_number(s)');
+    } catch (e) { console.error('Migration failed for job_card_number:', e.message); }
+  }
+
+  // Migration: add job_card_id to downtime_events
+  var dtInfo = await db.all("PRAGMA table_info(downtime_events)");
+  var dtCols = dtInfo.map(function(r) { return r.name; });
+  if (!dtCols.includes('job_card_id')) {
+    try { await db.run('ALTER TABLE downtime_events ADD COLUMN job_card_id TEXT'); } catch (e) { console.error('Migration failed for job_card_id:', e.message); }
+  }
+
+  // Migration: add username to profiles
+  var profInfo = await db.all("PRAGMA table_info(profiles)");
+  var profCols = profInfo.map(function(r) { return r.name; });
+  if (!profCols.includes('username')) {
+    try {
+      await db.run('ALTER TABLE profiles ADD COLUMN username TEXT');
+      await db.run("UPDATE profiles SET username = CASE WHEN instr(full_name, '@') > 0 THEN substr(full_name, 1, instr(full_name, '@') - 1) ELSE full_name END WHERE username IS NULL");
+      console.log('  ✅ Added username to profiles');
+    } catch (e) { console.error('Migration failed for username:', e.message); }
+  }
+
+  // Migration: fix user_roles.user_id mismatch (profiles.id vs user_roles.user_id)
+  try {
+    var fixedCount = 0;
+    var brokenRoles = await db.all(
+      "SELECT r.id, r.user_id FROM user_roles r LEFT JOIN profiles p ON p.id = r.user_id WHERE p.id IS NULL"
+    );
+    for (var br = 0; br < brokenRoles.length; br++) {
+      var matchingProfile = await db.get(
+        "SELECT id FROM profiles WHERE full_name = ? OR full_name LIKE ?",
+        [brokenRoles[br].user_id, '%' + brokenRoles[br].user_id + '%']
+      );
+      if (matchingProfile) {
+        await db.run("UPDATE user_roles SET user_id = ? WHERE id = ?", [matchingProfile.id, brokenRoles[br].id]);
+        fixedCount++;
+      }
+    }
+    if (fixedCount > 0) console.log('  ✅ Fixed ' + fixedCount + ' user_roles.user_id mismatch(es)');
+  } catch (e) { console.error('Migration failed for user_roles fix:', e.message); }
 
   // ── Proxy non-API routes to SSR frontend server ──
   const SSR_PORT = parseInt(process.env.SSR_PORT || '3002', 10);

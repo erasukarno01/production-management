@@ -29,9 +29,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loadRoles = async (uid: string | undefined, fallbackRoles?: Role[]) => {
     if (!uid) { setRoles([]); return; }
-    const { data } = await db.from("user_roles").select("role").eq("user_id", uid);
-    const loaded = ((data ?? []).map((r: any) => r.role as Role));
-    setRoles(loaded.length > 0 ? loaded : (fallbackRoles ?? []));
+    try {
+      const { data } = await db.from("user_roles").select("role").eq("user_id", uid);
+      const loaded = ((data ?? []).map((r: any) => r.role as Role));
+      setRoles(loaded.length > 0 ? loaded : (fallbackRoles ?? []));
+    } catch (err) {
+      console.error("loadRoles error:", err);
+      setRoles(fallbackRoles ?? []);
+    }
   };
 
   useEffect(() => {
@@ -53,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAdmin: roles.includes("admin"),
     isSupervisor: roles.includes("supervisor") || roles.includes("admin"),
     isOperator: roles.includes("operator") || roles.includes("admin"),
-    signOut: async () => { await db.auth.signOut(); },
+    signOut: async () => { try { await db.auth.signOut(); } catch (e) { console.error("signOut error:", e); } },
     refreshRoles: async () => loadRoles(user?.id),
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

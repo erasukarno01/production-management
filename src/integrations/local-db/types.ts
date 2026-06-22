@@ -79,6 +79,28 @@ export interface Product {
   updated_at?: string | null;
 }
 
+export interface WoStation {
+  id: string;
+  work_order_id: string;
+  station_id: string;
+  job_card_number?: string | null;
+  status: string;
+  actual_start?: string | null;
+  actual_end?: string | null;
+  actual_qty?: number | null;
+  ng_qty?: number | null;
+  operator_id?: string | null;
+  operator_name?: string | null;
+  notes?: string | null;
+  availability?: number | null;
+  performance?: number | null;
+  quality?: number | null;
+  oee?: number | null;
+  sort_order?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface WorkOrder {
   id: string;
   wo_number: string;
@@ -103,7 +125,9 @@ export interface WorkOrder {
 
 export interface Profile {
   id: string;
+  email?: string | null;
   full_name?: string | null;
+  username?: string | null;
   password_hash?: string | null;
   line_id?: string | null;
   created_at?: string | null;
@@ -155,6 +179,7 @@ export type TableMap = {
   alerts: Alert;
   products: Product;
   work_orders: WorkOrder;
+  wo_stations: WoStation;
   profiles: Profile;
   user_roles: UserRole;
   edge_nodes: EdgeNode;

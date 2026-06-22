@@ -153,12 +153,12 @@ const mockAuth = {
     }
     return { data: { user: null }, error: null };
   },
-  async signInWithPassword({ email, password }: { email: string; password: string }) {
+  async signInWithPassword({ email, password, username }: { email?: string; password: string; username?: string }) {
     try {
       const response = await fetch(`${LOCAL_API_URL}/api/local-auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ username: username || email, password })
       });
       const result = await response.json();
       if (result.error) return { data: null, error: result.error };

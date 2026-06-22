@@ -84,7 +84,9 @@ async function seed() {
 
     CREATE TABLE IF NOT EXISTS profiles (
       id TEXT PRIMARY KEY,
+      email TEXT,
       full_name TEXT,
+      username TEXT UNIQUE,
       password_hash TEXT,
       line_id TEXT REFERENCES lines(id) ON DELETE SET NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -215,7 +217,7 @@ async function seed() {
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.pbkdf2Sync('admin123', salt, 100000, 64, 'sha512').toString('hex');
   const passwordHash = salt + ':' + hash;
-  await db.run('INSERT INTO profiles (id, full_name, password_hash) VALUES (?, ?, ?)', [adminId, 'admin@oee.com', passwordHash]);
+  await db.run('INSERT INTO profiles (id, email, full_name, username, password_hash) VALUES (?, ?, ?, ?, ?)', [adminId, 'admin@oee.com', 'admin@oee.com', 'admin', passwordHash]);
   await db.run('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)', [crypto.randomUUID(), adminId, 'admin']);
   console.log('[SQLite Seed] Default admin account created: admin@oee.com / admin123');
 
@@ -257,17 +259,17 @@ async function seed() {
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 86400000);
   const workOrders = [
-    { wo: 'WO-2026-001', product_id: 'prod-d52', line_id: 'line-smt1', station_id: 'smt1-aoi', planned_qty: 500, status: 'open' },
-    { wo: 'WO-2026-002', product_id: 'prod-dh7', line_id: 'line-smt1', station_id: 'smt1-mounting', planned_qty: 300, status: 'open' },
-    { wo: 'WO-2026-003', product_id: 'prod-d52', line_id: 'line-smt2', station_id: 'smt2-aoi', planned_qty: 450, status: 'in_progress' },
-    { wo: 'WO-2026-004', product_id: 'prod-x1',  line_id: 'line-sub-ccu', station_id: 'sub-ccu-cutting', planned_qty: 200, status: 'draft' },
-    { wo: 'WO-2026-005', product_id: 'prod-x2',  line_id: 'line-final-ccu1', station_id: 'final1-bt', planned_qty: 150, status: 'open' },
-    { wo: 'WO-2026-006', product_id: 'prod-d52', line_id: 'line-final-ccu2', station_id: 'final2-func', planned_qty: 600, status: 'open' },
+    { wo: 'WO-2026-001', product_id: 'prod-d52', line_id: 'line-smt1', planned_qty: 500, status: 'open' },
+    { wo: 'WO-2026-002', product_id: 'prod-dh7', line_id: 'line-smt1', planned_qty: 300, status: 'open' },
+    { wo: 'WO-2026-003', product_id: 'prod-d52', line_id: 'line-smt2', planned_qty: 450, status: 'in_progress' },
+    { wo: 'WO-2026-004', product_id: 'prod-x1',  line_id: 'line-sub-ccu', planned_qty: 200, status: 'draft' },
+    { wo: 'WO-2026-005', product_id: 'prod-x2',  line_id: 'line-final-ccu1', planned_qty: 150, status: 'open' },
+    { wo: 'WO-2026-006', product_id: 'prod-d52', line_id: 'line-final-ccu2', planned_qty: 600, status: 'open' },
   ];
   for (const wo of workOrders) {
-    await db.run(`INSERT INTO work_orders (id, wo_number, product_id, line_id, station_id, planned_qty, status, planned_start, planned_end, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+7 days'), 'admin@oee.com', datetime('now'), datetime('now'))`,
-      [crypto.randomUUID(), wo.wo, wo.product_id, wo.line_id, wo.station_id, wo.planned_qty, wo.status]);
+    await db.run(`INSERT INTO work_orders (id, wo_number, product_id, line_id, planned_qty, status, planned_start, planned_end, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+7 days'), 'admin@oee.com', datetime('now'), datetime('now'))`,
+      [crypto.randomUUID(), wo.wo, wo.product_id, wo.line_id, wo.planned_qty, wo.status]);
   }
   console.log('[SQLite Seed] Berhasil insert ' + workOrders.length + ' Work Orders.');
 

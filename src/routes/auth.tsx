@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Factory, Loader2, ShieldCheck, Cpu } from "lucide-react";
+import { Eye, EyeOff, Factory, Loader2, ShieldCheck, Cpu } from "lucide-react";
 import { toast } from "sonner";
 import { db } from "@/integrations/local-db/client";
 import { Button } from "@/components/ui/button";
@@ -16,9 +16,10 @@ export const Route = createFileRoute("/auth")({
 
 function AuthPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPwd, setShowPwd] = useState(false);
 
   useEffect(() => {
     db.auth.getUser().then(({ data }) => {
@@ -28,7 +29,7 @@ function AuthPage() {
 
   const signIn = async () => {
     setLoading(true);
-    const { error } = await db.auth.signInWithPassword({ email, password });
+    const { error } = await db.auth.signInWithPassword({ username, password });
     setLoading(false);
     if (error) return toast.error(error.message);
     toast.success("Signed in successfully");
@@ -99,20 +100,26 @@ function AuthPage() {
             <CardContent>
               <form onSubmit={(e) => { e.preventDefault(); signIn(); }} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-slate-300">Email</Label>
+                  <Label htmlFor="username" className="text-slate-300">Username / Email</Label>
                   <Input
-                    id="email" type="email" placeholder="operator@chaolong.com"
-                    value={email} onChange={(e) => setEmail(e.target.value)} autoFocus
+                    id="username" type="text" placeholder="admin"
+                    value={username} onChange={(e) => setUsername(e.target.value)} autoFocus
                     className="bg-slate-900/60 border-slate-600 text-white placeholder:text-slate-500 focus:border-red-500 h-11"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password" className="text-slate-300">Password</Label>
-                  <Input
-                    id="password" type="password" placeholder="••••••••"
-                    value={password} onChange={(e) => setPassword(e.target.value)}
-                    className="bg-slate-900/60 border-slate-600 text-white placeholder:text-slate-500 focus:border-red-500 h-11"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="password" type={showPwd ? "text" : "password"} placeholder="••••••••"
+                      value={password} onChange={(e) => setPassword(e.target.value)}
+                      className="bg-slate-900/60 border-slate-600 text-white placeholder:text-slate-500 focus:border-red-500 h-11 pr-10"
+                    />
+                    <button type="button" onClick={() => setShowPwd((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                      {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
                 </div>
                 <Button type="submit"
                   className="w-full h-11 bg-red-600 hover:bg-red-500 text-white font-semibold shadow-lg shadow-red-600/25 hover:shadow-red-500/30"

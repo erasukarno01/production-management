@@ -34,8 +34,10 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
 
   useEffect(() => {
     const load = async () => {
-      const { count } = await db.from("alerts").select("id", { count: "exact", head: true }).is("acknowledged_at", null);
-      setAlertCount(count ?? 0);
+      try {
+        const { count } = await db.from("alerts").select("id", { count: "exact", head: true }).is("acknowledged_at", null);
+        setAlertCount(count ?? 0);
+      } catch (_) { /* alerts count not critical */ }
     };
     load();
     const ch = db.channel("alerts-count")

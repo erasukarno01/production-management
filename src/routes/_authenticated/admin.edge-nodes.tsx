@@ -5,7 +5,7 @@ import { Radio, Plus, Trash2, RefreshCw, Monitor, Wifi, WifiOff } from "lucide-r
 import { AppShell } from "@/components/AppShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -32,13 +32,6 @@ function EdgeNodesPage() {
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
-
-  const assignStation = async (nodeId: string, stationId: string) => {
-    const { error } = await db.from("edge_nodes").update({ station_id: stationId, updated_at: new Date().toISOString() }).eq("id", nodeId);
-    if (error) return toast.error(error.message);
-    toast.success("Station assigned");
-    load();
-  };
 
   const deleteNode = async (id: string) => {
     if (!confirm("Delete this edge node?")) return;
@@ -112,18 +105,7 @@ function EdgeNodesPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Select value={node.station_id || ""} onValueChange={(v) => assignStation(node.id, v)}>
-                          <SelectTrigger className="h-8 text-xs max-w-[250px]">
-                            <SelectValue placeholder="Select station..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {stations.map((st: any) => (
-                              <SelectItem key={st.id} value={st.id}>
-                                {st.name} · {st.lines?.name ?? "—"} · {st.lines?.categories?.name ?? ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <span className="text-sm">{getStationName(node.station_id)}</span>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {node.last_seen ? new Date(node.last_seen).toLocaleString() : "—"}
@@ -143,8 +125,8 @@ function EdgeNodesPage() {
           <div className="mt-4 p-3 bg-muted/30 rounded-md border border-border">
             <h4 className="text-xs font-semibold text-muted-foreground mb-2">ℹ️ How Edge Nodes Register</h4>
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Each production-edge workstation calls <code className="bg-muted px-1 rounded text-[10px]">POST /api/edge/register</code> with its <code className="bg-muted px-1 rounded text-[10px]">node_name</code> and <code className="bg-muted px-1 rounded text-[10px]">station_id</code> on startup.
-              The station_id must match a station ID from the <strong>Structure</strong> admin page.
+              Each production-edge workstation calls <code className="bg-muted px-1 rounded text-[10px]">POST /api/edge/register</code> with its API token on startup.
+              The server looks up the token to find the assigned station.
               Once registered, the edge node pushes OEE snapshots to <code className="bg-muted px-1 rounded text-[10px]">POST /api/sync</code>.
             </p>
           </div>
