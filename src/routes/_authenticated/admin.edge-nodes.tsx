@@ -25,7 +25,7 @@ function EdgeNodesPage() {
     setLoading(true);
     const [n, s] = await Promise.all([
       db.from("edge_nodes").select("*").order("updated_at", { ascending: false }),
-      db.from("stations").select("*, lines(name, categories(name))").order("sort_order"),
+      db.from("stations").select("*, lines(name, production_sections(name))").order("sort_order"),
     ]);
     setNodes(n.data ?? []);
     setStations(s.data ?? []);

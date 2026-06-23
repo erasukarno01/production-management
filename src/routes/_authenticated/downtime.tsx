@@ -20,7 +20,7 @@ function DowntimePage() {
   const [q, setQ] = useState("");
   const load = async () => {
     const { data } = await db.from("downtime_events")
-      .select("*, stations(name, lines(name, categories(name)))")
+      .select("*, stations(name, lines(name, production_sections(name)))")
       .order("started_at", { ascending: false }).limit(500);
     setEvents(data ?? []);
   };
@@ -48,7 +48,7 @@ function DowntimePage() {
               filtered.map((e) => ({
                 started_at: e.started_at, ended_at: e.ended_at, duration_sec: e.duration_sec,
                 category: e.category, reason: e.reason, note: e.note,
-                category_group: e.stations?.lines?.categories?.name,
+                category_group: e.stations?.lines?.production_sections?.name,
                 line: e.stations?.lines?.name, station: e.stations?.name,
               })))}>
               <Download className="h-4 w-4 mr-1" /> CSV

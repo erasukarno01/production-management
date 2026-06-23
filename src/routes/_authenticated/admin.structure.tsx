@@ -28,21 +28,21 @@ function StructurePage() {
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const load = async () => {
-    const [c, l, s, t] = await Promise.all([
-      db.from("categories").select("*").order("sort_order"),
+    const [ps, l, s, t] = await Promise.all([
+      db.from("production_sections").select("*").order("sort_order"),
       db.from("lines").select("*").order("sort_order"),
       db.from("stations").select("*").order("sort_order"),
       fetch(API_BASE + '/api/admin/tokens', { headers: authHeaders() }).then(r => r.json()).catch(() => ({ data: [] })),
     ]);
-    const cats = c.data ?? [];
+    const sections = ps.data ?? [];
     const lines = l.data ?? [];
     const stations = s.data ?? [];
     const tokenMap: Record<string, any> = {};
     (t.data ?? []).forEach((tk: any) => { if (tk.station_id) tokenMap[tk.station_id] = tk; });
     setTokens(tokenMap);
-    const treeData = cats.map((cat: any) => ({
-      ...cat,
-      _children: lines.filter((l: any) => l.category_id === cat.id).map((line: any) => ({
+    const treeData = sections.map((sec: any) => ({
+      ...sec,
+      _children: lines.filter((l: any) => l.production_section_id === sec.id).map((line: any) => ({
         ...line,
         _children: stations.filter((s: any) => s.line_id === line.id),
       })),
@@ -168,7 +168,7 @@ function StructurePage() {
   };
 
   // ── Helpers ──
-  const catColor = (name: string) => {
+  const sectionColor = (name: string) => {
     const n = name.toLowerCase();
     if (n.includes("smt")) return { bg: "bg-blue-500/10 hover:bg-blue-500/15", border: "border-l-blue-500", icon: "text-blue-400" };
     if (n.includes("sub") || n.includes("final")) return { bg: "bg-amber-500/10 hover:bg-amber-500/15", border: "border-l-amber-500", icon: "text-amber-400" };
@@ -257,78 +257,78 @@ function StructurePage() {
             <SquareStack className="h-4 w-4 text-primary shrink-0" />
             <span className="text-sm font-bold">Production Structure</span>
             <span className="text-[11px] text-muted-foreground">
-              {tree.length} categories · {tree.reduce((s, c) => s + (c._children?.length || 0), 0)} lines · {stationCount} stations
+              {tree.length} sections · {tree.reduce((s, c) => s + (c._children?.length || 0), 0)} lines · {stationCount} stations
               {tokenCount > 0 && <span className="text-green-400"> · {tokenCount} tokens</span>}
             </span>
           </div>
-          <Button size="sm" onClick={() => startAdd("_cat")} className="h-7 gap-1 text-xs"><Plus className="h-3 w-3" /> Add Category</Button>
+          <Button size="sm" onClick={() => startAdd("_sec")} className="h-7 gap-1 text-xs"><Plus className="h-3 w-3" /> Add Section</Button>
         </div>
 
-        {adding["_cat"] && (
+        {adding["_sec"] && (
           <div className="flex items-center gap-1.5 bg-blue-500/5 border border-blue-500/20 rounded-md px-3 py-1.5">
-            <Input value={adding["_cat"].name} onChange={(e) => setAdding({ ...adding, _cat: { ...adding["_cat"], name: e.target.value } })} placeholder="Category name" className="h-7 text-xs flex-1 max-w-[180px]" onKeyDown={(e) => e.key === "Enter" && saveAdd("categories", "_cat", { sort_order: tree.length + 1 })} autoFocus />
-            <Button size="sm" onClick={() => saveAdd("categories", "_cat", { sort_order: tree.length + 1 })} className="h-7 w-7 p-0"><Check className="h-3.5 w-3.5" /></Button>
-            <Button size="sm" variant="ghost" onClick={() => cancelAdd("_cat")} className="h-7 w-7 p-0"><X className="h-3.5 w-3.5" /></Button>
+            <Input value={adding["_sec"].name} onChange={(e) => setAdding({ ...adding, _sec: { ...adding["_sec"], name: e.target.value } })} placeholder="Section name" className="h-7 text-xs flex-1 max-w-[180px]" onKeyDown={(e) => e.key === "Enter" && saveAdd("production_sections", "_sec", { sort_order: tree.length + 1 })} autoFocus />
+            <Button size="sm" onClick={() => saveAdd("production_sections", "_sec", { sort_order: tree.length + 1 })} className="h-7 w-7 p-0"><Check className="h-3.5 w-3.5" /></Button>
+            <Button size="sm" variant="ghost" onClick={() => cancelAdd("_sec")} className="h-7 w-7 p-0"><X className="h-3.5 w-3.5" /></Button>
           </div>
         )}
 
         {/* Tree */}
         <div className="rounded-lg border border-border bg-card overflow-x-auto">
           {tree.length === 0 ? (
-            <div className="p-12 text-center text-muted-foreground text-sm"><Folder className="h-8 w-8 mx-auto mb-2 opacity-30" />No categories yet.</div>
+            <div className="p-12 text-center text-muted-foreground text-sm"><Folder className="h-8 w-8 mx-auto mb-2 opacity-30" />No sections yet.</div>
           ) : (
-            tree.map((cat) => {
-              const cc = catColor(cat.name);
-              const catLines = cat._children || [];
-              const isCatExp = expanded[cat.id];
-              const catStationCount = catLines.reduce((s: number, l: any) => s + (l._children?.length || 0), 0);
+            tree.map((sec) => {
+              const cc = sectionColor(sec.name);
+              const secLines = sec._children || [];
+              const isSecExp = expanded[sec.id];
+              const secStationCount = secLines.reduce((s: number, l: any) => s + (l._children?.length || 0), 0);
 
               return (
-                <div key={cat.id}>
-                  {/* ── Category Row ── */}
-                  <div className={cn("flex items-center gap-1.5 px-3 py-1.5 border-l-4 border-b border-border transition-colors group cursor-pointer select-none", cc.bg, cc.border)} onClick={() => toggle(cat.id)}>
+                <div key={sec.id}>
+                  {/* ── Section Row ── */}
+                  <div className={cn("flex items-center gap-1.5 px-3 py-1.5 border-l-4 border-b border-border transition-colors group cursor-pointer select-none", cc.bg, cc.border)} onClick={() => toggle(sec.id)}>
                     <div className="h-4 w-4 grid place-items-center text-muted-foreground shrink-0">
-                      {isCatExp ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      {isSecExp ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                     </div>
                     <Folder className={cn("h-3.5 w-3.5 shrink-0", cc.icon)} />
-                    {editing[cat.id]?.field === "name" ? (
-                      <Input value={editing[cat.id].value} onChange={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} className="h-6 text-xs flex-1 max-w-[180px]" onKeyDown={(e) => { e.stopPropagation(); handleKeyDown(e, "categories", cat.id); }} autoFocus />
+                    {editing[sec.id]?.field === "name" ? (
+                        <Input value={editing[sec.id].value} onChange={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} className="h-6 text-xs flex-1 max-w-[180px]" onKeyDown={(e) => { e.stopPropagation(); handleKeyDown(e, "production_sections", sec.id); }} autoFocus />
                     ) : (
-                      <span className="flex-1 text-xs font-semibold">{cat.name}</span>
+                      <span className="flex-1 text-xs font-semibold">{sec.name}</span>
                     )}
-                    <span className="text-[10px] text-muted-foreground">{catStationCount} stn · {catLines.length} ln</span>
-                    {!editing[cat.id]?.field && (
+                    <span className="text-[10px] text-muted-foreground">{secStationCount} stn · {secLines.length} ln</span>
+                    {!editing[sec.id]?.field && (
                       <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => startEdit(cat.id, "name", cat.name)} title="Rename"><Pencil className="h-3 w-3 text-muted-foreground" /></Button>
-                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => { if (confirm("Delete category?")) del("categories", cat.id); }} title="Delete"><Trash2 className="h-3 w-3 text-red-400" /></Button>
-                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => startAdd(`line-${cat.id}`)} title="Add line"><Plus className="h-3 w-3 text-blue-400" /></Button>
+                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => startEdit(sec.id, "name", sec.name)} title="Rename"><Pencil className="h-3 w-3 text-muted-foreground" /></Button>
+                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => { if (confirm("Delete section?")) del("production_sections", sec.id); }} title="Delete"><Trash2 className="h-3 w-3 text-red-400" /></Button>
+                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => startAdd(`line-${sec.id}`)} title="Add line"><Plus className="h-3 w-3 text-blue-400" /></Button>
                       </span>
                     )}
-                    {editing[cat.id]?.field === "name" && (
+                    {editing[sec.id]?.field === "name" && (
                       <span className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => saveEdit("categories", cat.id)}><Check className="h-3 w-3 text-green-400" /></Button>
-                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => cancelEdit(cat.id)}><X className="h-3 w-3 text-muted-foreground" /></Button>
+                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => saveEdit("production_sections", sec.id)}><Check className="h-3 w-3 text-green-400" /></Button>
+                        <Button size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => cancelEdit(sec.id)}><X className="h-3 w-3 text-muted-foreground" /></Button>
                       </span>
                     )}
                   </div>
 
-                  {isCatExp && (
+                  {isSecExp && (
                     <div>
-                      {adding[`line-${cat.id}`] && (
+                      {adding[`line-${sec.id}`] && (
                         <div className="flex items-center gap-1.5 pl-8 pr-3 py-1 bg-blue-500/5 border-b border-border/50">
                           <LineChart className="h-3 w-3 text-muted-foreground shrink-0" />
-                          <Input value={adding[`line-${cat.id}`].name} onChange={(e) => setAdding({ ...adding, [`line-${cat.id}`]: { ...adding[`line-${cat.id}`], name: e.target.value } })} placeholder="Line name" className="h-6 text-xs flex-1 max-w-[150px]" onKeyDown={(e) => e.key === "Enter" && saveAdd("lines", `line-${cat.id}`, { category_id: cat.id })} autoFocus />
-                          <Input value={adding[`line-${cat.id}`].target_oee} onChange={(e) => setAdding({ ...adding, [`line-${cat.id}`]: { ...adding[`line-${cat.id}`], target_oee: e.target.value } })} placeholder="OEE %" className="h-6 text-xs w-16" onKeyDown={(e) => e.key === "Enter" && saveAdd("lines", `line-${cat.id}`, { category_id: cat.id })} />
-                          <Button size="icon" variant="ghost" className="h-6 w-6 p-0" onClick={() => saveAdd("lines", `line-${cat.id}`, { category_id: cat.id })}><Check className="h-3 w-3 text-green-400" /></Button>
-                          <Button size="icon" variant="ghost" className="h-6 w-6 p-0" onClick={() => cancelAdd(`line-${cat.id}`)}><X className="h-3 w-3 text-muted-foreground" /></Button>
+                          <Input value={adding[`line-${sec.id}`].name} onChange={(e) => setAdding({ ...adding, [`line-${sec.id}`]: { ...adding[`line-${sec.id}`], name: e.target.value } })} placeholder="Line name" className="h-6 text-xs flex-1 max-w-[150px]" onKeyDown={(e) => e.key === "Enter" && saveAdd("lines", `line-${sec.id}`, { production_section_id: sec.id })} autoFocus />
+                          <Input value={adding[`line-${sec.id}`].target_oee} onChange={(e) => setAdding({ ...adding, [`line-${sec.id}`]: { ...adding[`line-${sec.id}`], target_oee: e.target.value } })} placeholder="OEE %" className="h-6 text-xs w-16" onKeyDown={(e) => e.key === "Enter" && saveAdd("lines", `line-${sec.id}`, { production_section_id: sec.id })} />
+                          <Button size="icon" variant="ghost" className="h-6 w-6 p-0" onClick={() => saveAdd("lines", `line-${sec.id}`, { production_section_id: sec.id })}><Check className="h-3 w-3 text-green-400" /></Button>
+                          <Button size="icon" variant="ghost" className="h-6 w-6 p-0" onClick={() => cancelAdd(`line-${sec.id}`)}><X className="h-3 w-3 text-muted-foreground" /></Button>
                         </div>
                       )}
 
-                      {catLines.length === 0 && !adding[`line-${cat.id}`] && (
-                        <div className="pl-8 pr-3 py-1 text-[11px] text-muted-foreground border-b border-border/50 italic">No lines — <button className="text-blue-400 hover:underline" onClick={(e) => { e.stopPropagation(); startAdd(`line-${cat.id}`); }}>add one</button></div>
+                      {secLines.length === 0 && !adding[`line-${sec.id}`] && (
+                        <div className="pl-8 pr-3 py-1 text-[11px] text-muted-foreground border-b border-border/50 italic">No lines — <button className="text-blue-400 hover:underline" onClick={(e) => { e.stopPropagation(); startAdd(`line-${sec.id}`); }}>add one</button></div>
                       )}
 
-                      {catLines.map((line: any) => {
+                      {secLines.map((line: any) => {
                         const stations = line._children || [];
                         const isLineExp = expanded[line.id];
                         return (

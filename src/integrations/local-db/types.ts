@@ -1,4 +1,4 @@
-export interface Category {
+export interface ProductionSection {
   id: string;
   name: string;
   sort_order: number;
@@ -7,7 +7,7 @@ export interface Category {
 
 export interface Line {
   id: string;
-  category_id: string;
+  production_section_id: string;
   name: string;
   target_oee: number;
   sort_order: number;
@@ -171,7 +171,7 @@ export interface ApiToken {
 }
 
 export type TableMap = {
-  categories: Category;
+  production_sections: ProductionSection;
   lines: Line;
   stations: Station;
   oee_snapshots: OeeSnapshot;

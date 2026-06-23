@@ -2,7 +2,7 @@ export type OeeStatus = "good" | "warning" | "critical";
 
 export function oeeStatus(value: number, target = 0.85): OeeStatus {
   if (value >= target) return "good";
-  if (value >= target * 0.8) return "warning";
+  if (value >= 0.60) return "warning";
   return "critical";
 }
 

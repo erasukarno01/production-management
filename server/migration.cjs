@@ -11,8 +11,28 @@ async function migrate() {
   const db = await open({ filename: DB_PATH, driver: sqlite3.Database });
 
   console.log('[Migration] Creating tables...');
+
+  // Migrate old table & column names
+  try { await db.exec("DROP TABLE IF EXISTS categories"); } catch (_) {}
+  try { await db.exec("ALTER TABLE lines RENAME COLUMN category_id TO production_section_id"); } catch (_) {}
+
+  // Fix legacy FK reference (categories → production_sections) if still present
+  try {
+    const linesSql = await db.get("SELECT sql FROM sqlite_master WHERE name='lines'");
+    if (linesSql && linesSql.sql.includes('REFERENCES categories')) {
+      console.log('[Migration] Fixing legacy FK on lines → production_sections...');
+      await db.exec("PRAGMA foreign_keys=OFF");
+      await db.exec("CREATE TABLE lines_new (id TEXT PRIMARY KEY, production_section_id TEXT REFERENCES production_sections(id) ON DELETE CASCADE, name TEXT NOT NULL, target_oee REAL DEFAULT 0.85, sort_order INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+      await db.exec("INSERT INTO lines_new SELECT * FROM lines");
+      await db.exec("DROP TABLE lines");
+      await db.exec("ALTER TABLE lines_new RENAME TO lines");
+      await db.exec("PRAGMA foreign_keys=ON");
+      console.log('[Migration] FK fix complete.');
+    }
+  } catch (_) {}
+
   await db.exec(`
-    CREATE TABLE IF NOT EXISTS categories (
+    CREATE TABLE IF NOT EXISTS production_sections (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       sort_order INTEGER DEFAULT 0,
@@ -22,7 +42,7 @@ async function migrate() {
 
     CREATE TABLE IF NOT EXISTS lines (
       id TEXT PRIMARY KEY,
-      category_id TEXT REFERENCES categories(id) ON DELETE CASCADE,
+      production_section_id TEXT REFERENCES production_sections(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       target_oee REAL DEFAULT 0.85,
       sort_order INTEGER DEFAULT 0,
@@ -96,6 +116,7 @@ async function migrate() {
     CREATE TABLE IF NOT EXISTS oee_snapshots (
       id TEXT PRIMARY KEY,
       station_id TEXT REFERENCES stations(id) ON DELETE CASCADE,
+      job_card_id TEXT,
       ts TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       availability REAL NOT NULL,
       performance REAL NOT NULL,
@@ -142,7 +163,7 @@ async function migrate() {
       name TEXT NOT NULL,
       model TEXT,
       serial_prefix TEXT,
-      cycle_time_sec INTEGER DEFAULT 60,
+      cycle_time_sec REAL DEFAULT 30,
       ng_target_ratio REAL DEFAULT 0.02,
       active INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -192,16 +213,29 @@ async function migrate() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS ng_defects (
+      id TEXT PRIMARY KEY,
+      station_id TEXT REFERENCES stations(id) ON DELETE CASCADE,
+      work_order_id TEXT REFERENCES work_orders(id) ON DELETE SET NULL,
+      category TEXT NOT NULL,
+      quantity INTEGER DEFAULT 1,
+      ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Migrations for existing databases
   const migrations = [
     "ALTER TABLE oee_snapshots ADD COLUMN plan_count INTEGER DEFAULT 0",
+    "ALTER TABLE oee_snapshots ADD COLUMN job_card_id TEXT",
     "ALTER TABLE profiles ADD COLUMN password_hash TEXT",
     "ALTER TABLE profiles ADD COLUMN username TEXT",
     "ALTER TABLE profiles ADD COLUMN email TEXT",
     "ALTER TABLE downtime_events ADD COLUMN job_card_id TEXT",
-    "ALTER TABLE oee_snapshots ADD COLUMN plan_count INTEGER DEFAULT 0",
+    "ALTER TABLE products ADD COLUMN serial_prefix TEXT",
+    "ALTER TABLE work_orders ADD COLUMN station_ids TEXT",
+    "ALTER TABLE work_orders ADD COLUMN updated_by TEXT",
   ];
   for (const m of migrations) {
     try { await db.exec(m); console.log('[Migration] OK: ' + m.split(' ').slice(0, 4).join(' ')); }

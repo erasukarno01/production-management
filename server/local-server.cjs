@@ -130,7 +130,7 @@ async function initDatabase() {
 
   // Buat tabel persis seperti Supabase Migrations
   await db.exec(`
-    CREATE TABLE IF NOT EXISTS categories (
+    CREATE TABLE IF NOT EXISTS production_sections (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       sort_order INTEGER DEFAULT 0,
@@ -139,7 +139,7 @@ async function initDatabase() {
 
     CREATE TABLE IF NOT EXISTS lines (
       id TEXT PRIMARY KEY,
-      category_id TEXT REFERENCES categories(id) ON DELETE CASCADE,
+      production_section_id TEXT REFERENCES production_sections(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       target_oee REAL DEFAULT 0.85,
       sort_order INTEGER DEFAULT 0,
@@ -255,6 +255,16 @@ async function initDatabase() {
       acknowledged_by TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS ng_defects (
+      id TEXT PRIMARY KEY,
+      station_id TEXT REFERENCES stations(id) ON DELETE CASCADE,
+      work_order_id TEXT REFERENCES work_orders(id) ON DELETE SET NULL,
+      category TEXT NOT NULL,
+      quantity INTEGER DEFAULT 1,
+      ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS profiles (
       id TEXT PRIMARY KEY,
       email TEXT,
@@ -313,12 +323,30 @@ async function initDatabase() {
   
   // Migration for existing databases
   try { await db.exec("ALTER TABLE oee_snapshots ADD COLUMN plan_count INTEGER DEFAULT 0"); } catch (e) {}
+  try { await db.exec("ALTER TABLE oee_snapshots ADD COLUMN job_card_id TEXT"); } catch (e) {}
   try { await db.exec("CREATE TABLE IF NOT EXISTS api_tokens (id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, label TEXT, node_name TEXT NOT NULL, station_id TEXT, permissions TEXT DEFAULT 'read,write', expires_at DATETIME, last_used_at DATETIME, created_by TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"); } catch (e) {}
   try { await db.exec("ALTER TABLE profiles ADD COLUMN password_hash TEXT"); } catch (e) {}
   try { await db.exec("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE, token TEXT NOT NULL UNIQUE, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"); } catch (e) {}
   try { await db.exec("ALTER TABLE profiles ADD COLUMN email TEXT"); } catch (e) {}
   try { await db.exec("UPDATE profiles SET email = id WHERE email IS NULL AND id LIKE '%@%'"); } catch (e) {}
   try { await db.exec("UPDATE profiles SET email = full_name WHERE email IS NULL"); } catch (e) {}
+  try { await db.exec("ALTER TABLE products ADD COLUMN serial_prefix TEXT"); } catch (e) {}
+  try { await db.exec("ALTER TABLE work_orders ADD COLUMN station_ids TEXT"); } catch (e) {}
+  try { await db.exec("ALTER TABLE work_orders ADD COLUMN updated_by TEXT"); } catch (e) {}
+  // Fix legacy FK reference on lines table (categories → production_sections)
+  try {
+    const linesSql = await db.get("SELECT sql FROM sqlite_master WHERE name='lines'");
+    if (linesSql && linesSql.sql.includes('REFERENCES categories')) {
+      console.log('[Migration] Fixing legacy FK on lines → production_sections...');
+      await db.exec("PRAGMA foreign_keys=OFF");
+      await db.exec("CREATE TABLE lines_new (id TEXT PRIMARY KEY, production_section_id TEXT REFERENCES production_sections(id) ON DELETE CASCADE, name TEXT NOT NULL, target_oee REAL DEFAULT 0.85, sort_order INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+      await db.exec("INSERT INTO lines_new SELECT * FROM lines");
+      await db.exec("DROP TABLE lines");
+      await db.exec("ALTER TABLE lines_new RENAME TO lines");
+      await db.exec("PRAGMA foreign_keys=ON");
+      console.log('[Migration] FK fix complete.');
+    }
+  } catch (e) { console.error('[Migration] FK fix failed:', e.message); }
   
   console.log('[SQLite Central] Database initialized.');
 }
@@ -345,7 +373,7 @@ function parseSupabaseSelect(selectStr) {
 const JOIN_FK_MAP = {
   'work_orders': { 'products': 'product_id', 'lines': 'line_id', 'stations': 'station_id' },
   'stations':    { 'lines': 'line_id' },
-  'lines':       { 'categories': 'category_id' },
+  'lines':       { 'production_sections': 'production_section_id' },
 };
 
 async function resolveJoins(row, joins, table) {
@@ -771,16 +799,16 @@ app.post('/api/sync', async (req, res) => {
   }
 });
 
-// REST API: ambil hierarki stations (Category -> Line -> Station)
+// REST API: ambil hierarki tempat produksi (Section -> Line -> Station)
 app.get('/api/stations', async (req, res) => {
   try {
-    const categories = await db.all('SELECT * FROM categories ORDER BY sort_order');
+    const sections = await db.all('SELECT * FROM production_sections ORDER BY sort_order');
     const lines = await db.all('SELECT * FROM lines ORDER BY sort_order');
     const stations = await db.all('SELECT * FROM stations ORDER BY sort_order');
 
-    const tree = categories.map(cat => ({
-      ...cat,
-      lines: lines.filter(l => l.category_id === cat.id).map(line => ({
+    const tree = sections.map(sec => ({
+      ...sec,
+      lines: lines.filter(l => l.production_section_id === sec.id).map(line => ({
         ...line,
         stations: stations.filter(s => s.line_id === line.id),
       })),
@@ -812,7 +840,7 @@ app.post('/api/edge/register', async (req, res) => {
     }
 
     // Get station info
-    const station = await db.get('SELECT s.*, l.name as line_name, c.name as group_name FROM stations s LEFT JOIN lines l ON l.id = s.line_id LEFT JOIN categories c ON c.id = l.category_id WHERE s.id = ?', [stationId]);
+    const station = await db.get('SELECT s.*, l.name as line_name, ps.name as group_name FROM stations s LEFT JOIN lines l ON l.id = s.line_id LEFT JOIN production_sections ps ON ps.id = l.production_section_id WHERE s.id = ?', [stationId]);
     if (!station) {
       return res.status(404).json({ error: 'Station ' + stationId + ' tidak ditemukan.' });
     }
